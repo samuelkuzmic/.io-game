@@ -6,7 +6,7 @@
     <!-- Firebase SDKs -->
 <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-    import { getFirestore, doc, setDoc, getDoc, onSnapshot, collection } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+    import { getFirestore, doc, setDoc, getDoc, onSnapshot, collection, deleteDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
     const firebaseConfig = {
       apiKey: "AIzaSyBsJywhasKsNtkcVged4jDBs39LWXn74dw",
@@ -25,6 +25,7 @@
     window.getDoc = getDoc;
     window.onSnapshot = onSnapshot;
     window.collection = collection;
+    window.deleteDoc = deleteDoc;
 </script>
     <style>
         body { margin: 0; background: #111; color: white; font-family: sans-serif; overflow: hidden; }
@@ -61,7 +62,7 @@
     <div class="btn" onclick="Game.allComeHere()">All Come Here</div>
 </div>
 
-<div id="leaderboard"><strong>Leaderboard (Multiplayer Sync Active)</strong><div id="lb-text">Player: 0 | Weapon Lvl: 0</div></div>
+<div id="leaderboard"><strong>Leaderboard</strong><div id="lb-text"></div></div>
 <div id="minimap-container"><canvas id="minimap" width="150" height="150"></canvas></div>
 
 <div id="ui">
@@ -100,6 +101,12 @@
     const mCanvas = document.getElementById('minimap');
     const mCtx = mCanvas.getContext('2d');
     canvas.width = window.innerWidth; canvas.height = window.innerHeight;
+
+    window.addEventListener('beforeunload', async () => {
+        if(Game.started) {
+            await window.deleteDoc(window.doc(window.db, "players", Game.p.name));
+        }
+    });
 
     const Game = {
         p: { x: 0, y: 0, gold: 0, iron: 0, dirt: 0, name: "Player", hp: 100, maxHp: 100, weapon: 0, food: 0, foodHeal: 20 },
@@ -333,8 +340,8 @@
                 if(!moved && activeTask !== 'idle') m.stuck++; else m.stuck = 0;
             });
 
-            let dx = (this.keys['KeyD'] ? 8 : 0) - (this.keys['KeyA'] ? 8 : 0);
-            let dy = (this.keys['KeyS'] ? 8 : 0) - (this.keys['KeyW'] ? 8 : 0);
+            let dx = (this.keys['KeyD'] ? 4 : 0) - (this.keys['KeyA'] ? 4 : 0);
+            let dy = (this.keys['KeyS'] ? 4 : 0) - (this.keys['KeyW'] ? 4 : 0);
             if(this.getTile(Math.floor((this.p.x+dx+15)/50), Math.floor((this.p.y+15)/50)) === 0) this.p.x += dx;
             if(this.getTile(Math.floor((this.p.x+15)/50), Math.floor((this.p.y+dy+15)/50)) === 0) this.p.y += dy;
 
@@ -390,7 +397,14 @@
             document.getElementById('gold').innerText = this.p.gold;
             document.getElementById('iron').innerText = this.p.iron;
             document.getElementById('food').innerText = this.p.food;
-            document.getElementById('lb-text').innerText = this.p.name + ": " + this.p.gold + " | Weapon Lvl: " + this.p.weapon;
+            
+            // Leaderboard logic: Top 10
+            let sortedPlayers = Object.entries(this.players).map(([k, v]) => ({name: k, gold: v.gold || 0}));
+            sortedPlayers.push({name: this.p.name, gold: this.p.gold});
+            sortedPlayers.sort((a,b) => b.gold - a.gold);
+            let lbText = sortedPlayers.slice(0, 10).map((p, i) => `${i+1}. ${p.name}: ${p.gold}`).join('<br>');
+            document.getElementById('lb-text').innerHTML = lbText;
+
             requestAnimationFrame(() => this.loop());
         }
     };
