@@ -4,23 +4,28 @@
     <meta charset="UTF-8">
     <title>Mine Forge: Multiplayer Sync</title>
     <!-- Firebase SDKs -->
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-        import { getFirestore, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+<script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+    import { getFirestore, doc, setDoc, getDoc, onSnapshot, collection } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
-        // REPLACE THIS WITH YOUR ACTUAL CONFIG
-        const firebaseConfig = {
-            apiKey: "YOUR_API_KEY",
-            authDomain: "io-game-7f1b7.firebaseapp.com",
-            projectId: "io-game-7f1b7",
-            storageBucket: "io-game-7f1b7.firebasestorage.app",
-            messagingSenderId: "953780706110",
-            appId: "1:953780706110:web:e270ca170f2b7470372a6f"
-        };
+    const firebaseConfig = {
+      apiKey: "AIzaSyBsJywhasKsNtkcVged4jDBs39LWXn74dw",
+      authDomain: "io-game-7f1b7.firebaseapp.com",
+      projectId: "io-game-7f1b7",
+      storageBucket: "io-game-7f1b7.firebasestorage.app",
+      messagingSenderId: "953780706110",
+      appId: "1:953780706110:web:e270ca170f2b7470372a6f",
+      measurementId: "G-70KELWQFCK"
+    };
 
-        const app = initializeApp(firebaseConfig);
-        window.db = getFirestore(app);
-    </script>
+    const app = initializeApp(firebaseConfig);
+    window.db = getFirestore(app);
+    window.doc = doc;
+    window.setDoc = setDoc;
+    window.getDoc = getDoc;
+    window.onSnapshot = onSnapshot;
+    window.collection = collection;
+</script>
     <style>
         body { margin: 0; background: #111; color: white; font-family: sans-serif; overflow: hidden; }
         #title-screen { position: absolute; top:0; left:0; width: 100%; height: 100%; background: #000; z-index: 999; display: flex; flex-direction: column; justify-content: center; align-items: center; }
@@ -101,6 +106,7 @@
         map: {}, miners: [], selectedMiner: null, mode: 'mine', interaction: 'normal', boxStart: null,
         globalTask: 'idle', frame: 0,
         WORLD_SIZE: 1000, OFFSET: 500,
+        players: {}, 
         mouse: {x: 0, y: 0}, keys: {}, started: false,
 
         async startGame() {
@@ -108,7 +114,17 @@
             if(!name) return;
             this.p.name = name;
             
-            // Attempt to load existing data
+            // Listen for all players
+            window.onSnapshot(window.collection(window.db, "players"), (snapshot) => {
+                this.players = {};
+                snapshot.forEach(doc => { if(doc.id !== this.p.name) this.players[doc.id] = doc.data(); });
+            });
+
+            // Listen for world sync
+            window.onSnapshot(window.doc(window.db, "global", "world"), (doc) => {
+                if(doc.exists()) this.map = doc.data().tiles;
+            });
+
             await this.loadGame(name);
 
             document.getElementById('title-screen').style.display = 'none';
@@ -117,24 +133,24 @@
             this.loop();
         },
 
-        // --- MULTIPLAYER SYNC FUNCTIONS ---
         async saveGame() {
             if(!window.db) return;
             try {
-                await setDoc(doc(window.db, "players", this.p.name), this.p);
+                await window.setDoc(window.doc(window.db, "players", this.p.name), this.p);
+                // Sync map if changed
+                await window.setDoc(window.doc(window.db, "global", "world"), { tiles: this.map });
             } catch (e) { console.error("Save failed", e); }
         },
 
         async loadGame(name) {
             if(!window.db) return;
             try {
-                const docSnap = await getDoc(doc(window.db, "players", name));
+                const docSnap = await window.getDoc(window.doc(window.db, "players", name));
                 if (docSnap.exists()) {
                     this.p = { ...this.p, ...docSnap.data() };
                 }
             } catch (e) { console.error("Load failed", e); }
         },
-        // ----------------------------------
 
         setMode(m) { 
             this.mode = m; 
@@ -275,17 +291,7 @@
             if(!this.started) return;
             this.frame++;
 
-            // Autosave every 5 seconds (assuming 60fps)
             if(this.frame % 300 === 0) this.saveGame();
-
-            // Respawn loop
-            if(this.frame % 300 === 0) {
-                let rx = Math.floor(Math.random() * 20 - 10);
-                let ry = Math.floor(Math.random() * 20 - 10);
-                if(this.getTile(rx, ry) === 0) {
-                    this.map[`${rx},${ry}`] = Math.random() > 0.5 ? 3 : 4;
-                }
-            }
 
             this.miners.forEach(m => {
                 let moved = false;
@@ -346,6 +352,14 @@
                         ctx.fillRect(x*50-camX, y*50-camY, 50, 50);
                     }
                 }
+            }
+
+            // Draw Other Players
+            ctx.fillStyle = "white";
+            for(let name in this.players) {
+                let p = this.players[name];
+                ctx.fillRect(p.x - camX, p.y - camY, 30, 30);
+                ctx.fillText(name, p.x - camX + 15, p.y - camY - 10);
             }
 
             ctx.strokeStyle = "lime"; ctx.lineWidth = 3;
