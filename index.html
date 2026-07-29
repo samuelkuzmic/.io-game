@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Mine Forge: Multiplayer Sync</title>
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+        import { getFirestore, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+        // REPLACE THIS WITH YOUR ACTUAL CONFIG
+        const firebaseConfig = {
+            apiKey: "YOUR_API_KEY",
+            authDomain: "io-game-7f1b7.firebaseapp.com",
+            projectId: "io-game-7f1b7",
+            storageBucket: "io-game-7f1b7.firebasestorage.app",
+            messagingSenderId: "953780706110",
+            appId: "1:953780706110:web:e270ca170f2b7470372a6f"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        window.db = getFirestore(app);
+    </script>
+    <style>
+        body { margin: 0; background: #111; color: white; font-family: sans-serif; overflow: hidden; }
+        #title-screen { position: absolute; top:0; left:0; width: 100%; height: 100%; background: #000; z-index: 999; display: flex; flex-direction: column; justify-content: center; align-items: center; }
+        #sidebar { position: absolute; left: 0; top: 0; width: 220px; height: 100%; background: #1a1a1a; border-right: 2px solid #444; padding: 10px; z-index: 10; }
+        #ui { position: absolute; bottom: 20px; right: 20px; background: rgba(0,0,0,0.85); padding: 15px; border: 1px solid #555; z-index: 10; }
+        #mode-indicator { position: absolute; top: 10px; right: 20px; padding: 10px; border: 2px solid #fff; font-weight: bold; }
+        #leaderboard { position: absolute; top: 20px; left: 250px; background: rgba(0,0,0,0.8); padding: 10px; z-index: 10; pointer-events: none; border: 1px solid #555; }
+        #minimap-container { position: absolute; bottom: 0; left: 0; border: 2px solid #555; z-index: 10; }
+        canvas#minimap { background: #000; display: block; }
+        .btn { padding: 8px; margin: 5px; cursor: pointer; background: #333; border: 1px solid #fff; display: block; font-size: 13px; text-align: center; }
+        #overlay { display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); flex-direction: column; justify-content: center; align-items: center; z-index: 100; overflow-y: auto; }
+        input { padding: 10px; margin-bottom: 10px; background: #000; color: #fff; border: 1px solid #555; }
+    </style>
+</head>
+<body>
+
+<div id="title-screen">
+    <h1>MINE FORGE</h1>
+    <input type="text" id="nameInput" placeholder="Enter Player Name">
+    <div class="btn" onclick="Game.startGame()">START GAME</div>
+</div>
+
+<div id="mode-indicator" style="color: #4da6ff;">MODE: MINE</div>
+
+<div id="sidebar">
+    <h3>Miners (Max 10)</h3>
+    <div id="miner-list"></div>
+    <hr>
+    <h3>Global Task</h3>
+    <div class="btn" onclick="Game.setGlobalTask('mine_gold')">All Mine Gold</div>
+    <div class="btn" onclick="Game.setGlobalTask('mine_iron')">All Mine Iron</div>
+    <div class="btn" onclick="Game.allStop()">All Stop</div>
+    <div class="btn" onclick="Game.allComeHere()">All Come Here</div>
+</div>
+
+<div id="leaderboard"><strong>Leaderboard (Multiplayer Sync Active)</strong><div id="lb-text">Player: 0 | Weapon Lvl: 0</div></div>
+<div id="minimap-container"><canvas id="minimap" width="150" height="150"></canvas></div>
+
+<div id="ui">
+    <div>Pos: <span id="coords">0,0</span> | HP: <span id="hp">100</span></div>
+    <div>Dirt: <span id="dirt">0</span> | Gold: <span id="gold">0</span> | Iron: <span id="iron">0</span> | Food: <span id="food">0</span></div>
+    <div class="btn" style="border-left: 5px solid #4da6ff;" onclick="Game.setMode('mine')">Mine Mode</div>
+    <div class="btn" style="border-left: 5px solid #ff4d4d;" onclick="Game.setMode('weapon')">Combat Mode</div>
+    <div class="btn" style="border-left: 5px solid #a67c52;" onclick="Game.setMode('build')">Build Mode</div>
+    <div class="btn" onclick="Game.buyMiner()">Buy Miner (5 Gold)</div>
+    <div class="btn" onclick="Game.buyWeapon()">Buy Weapon (10 Iron)</div>
+    <div class="btn" onclick="Game.buyFood()">Buy Food (5 Iron)</div>
+    <div class="btn" onclick="Game.upgradeFood()">Upgrade Food (10 Iron)</div>
+    <div class="btn" onclick="Game.eatFood()">Eat Food (Heal)</div>
+</div>
+
+<div id="overlay">
+    <h2 id="miner-name">Miner Config</h2>
+    <input type="text" id="rename" placeholder="Rename Miner">
+    <div class="btn" onclick="Game.renameMiner()">Apply Name</div>
+    <div class="btn" onclick="Game.resetMiner()" style="background: #a00;">STOP</div>
+    <div class="btn" onclick="Game.setInteraction('GOTO')">Go To Location</div>
+    <div class="btn" onclick="Game.setTask('dir_forward')">Move Forward</div>
+    <div class="btn" onclick="Game.setTask('dir_back')">Move Backward</div>
+    <div class="btn" onclick="Game.setTask('dir_up')">Move Up</div>
+    <div class="btn" onclick="Game.setTask('dir_down')">Move Down</div>
+    <div class="btn" onclick="Game.setTask('mine_gold')">Auto-Mine Gold</div>
+    <div class="btn" onclick="Game.setTask('mine_iron')">Auto-Mine Iron</div>
+    <div class="btn" onclick="document.getElementById('overlay').style.display='none'">Close</div>
+</div>
+
+<canvas id="game"></canvas>
+
+<script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+    const mCanvas = document.getElementById('minimap');
+    const mCtx = mCanvas.getContext('2d');
+    canvas.width = window.innerWidth; canvas.height = window.innerHeight;
+
+    const Game = {
+        p: { x: 0, y: 0, gold: 0, iron: 0, dirt: 0, name: "Player", hp: 100, maxHp: 100, weapon: 0, food: 0, foodHeal: 20 },
+        map: {}, miners: [], selectedMiner: null, mode: 'mine', interaction: 'normal', boxStart: null,
+        globalTask: 'idle', frame: 0,
+        WORLD_SIZE: 1000, OFFSET: 500,
+        mouse: {x: 0, y: 0}, keys: {}, started: false,
+
+        async startGame() {
+            const name = document.getElementById('nameInput').value;
+            if(!name) return;
+            this.p.name = name;
+            
+            // Attempt to load existing data
+            await this.loadGame(name);
+
+            document.getElementById('title-screen').style.display = 'none';
+            this.started = true;
+            this.clearSpawn();
+            this.loop();
+        },
+
+        // --- MULTIPLAYER SYNC FUNCTIONS ---
+        async saveGame() {
+            if(!window.db) return;
+            try {
+                await setDoc(doc(window.db, "players", this.p.name), this.p);
+            } catch (e) { console.error("Save failed", e); }
+        },
+
+        async loadGame(name) {
+            if(!window.db) return;
+            try {
+                const docSnap = await getDoc(doc(window.db, "players", name));
+                if (docSnap.exists()) {
+                    this.p = { ...this.p, ...docSnap.data() };
+                }
+            } catch (e) { console.error("Load failed", e); }
+        },
+        // ----------------------------------
+
+        setMode(m) { 
+            this.mode = m; 
+            const indicator = document.getElementById('mode-indicator');
+            indicator.innerText = "MODE: " + m.toUpperCase();
+            indicator.style.color = (m === 'mine') ? '#4da6ff' : (m === 'weapon' ? '#ff4d4d' : '#a67c52');
+        },
+
+        buyFood() { if(this.p.iron >= 5) { this.p.iron -= 5; this.p.food += 1; } },
+        upgradeFood() { if(this.p.iron >= 10) { this.p.iron -= 10; this.p.foodHeal += 10; } },
+        eatFood() { if(this.p.food > 0) { this.p.food -= 1; this.p.hp = Math.min(this.p.maxHp, this.p.hp + this.p.foodHeal); } },
+        allStop() { this.globalTask = 'idle'; this.miners.forEach(m => { m.task = 'idle'; m.target = null; }); },
+        allComeHere() { 
+            this.globalTask = 'come_here'; 
+            this.miners.forEach(m => { m.task = 'come_here'; m.target = {x: this.p.x, y: this.p.y}; }); 
+        },
+
+        getTile(x, y) {
+            if (x < -this.OFFSET || y < -this.OFFSET || x >= this.OFFSET || y >= this.OFFSET) return 5;
+            if (this.map[`${x},${y}`] !== undefined) return this.map[`${x},${y}`];
+            let h = Math.abs(Math.sin(x * 12.9898 + y * 78.233) * 43758.5453) % 1;
+            return (h > 0.99) ? 3 : (h > 0.97) ? 4 : 1; 
+        },
+
+        isTouchingAir(x, y) {
+            return this.getTile(x+1, y) === 0 || this.getTile(x-1, y) === 0 || 
+                   this.getTile(x, y+1) === 0 || this.getTile(x, y-1) === 0;
+        },
+
+        clearSpawn() {
+            for(let x = -1; x <= 1; x++) {
+                for(let y = -1; y <= 1; y++) {
+                    this.map[`${x},${y}`] = 0;
+                }
+            }
+        },
+
+        tryMove(m, dx, dy) {
+            let nextX = m.x + dx;
+            let nextY = m.y + dy;
+            let tx = Math.floor(nextX / 50);
+            let ty = Math.floor(nextY / 50);
+            let tile = this.getTile(tx, ty);
+            
+            if(tile !== 0 && tile !== 2 && tile !== 5) {
+                this.collect(tile);
+                this.map[`${tx},${ty}`] = 0;
+                return false; 
+            } else if (tile === 0) {
+                m.x = nextX; m.y = nextY;
+                return true;
+            }
+            return false;
+        },
+
+        buyMiner() {
+            if(this.p.gold >= 5 && this.miners.length < 10) {
+                this.p.gold -= 5;
+                this.miners.push({
+                    x: this.p.x + 50, y: this.p.y + 50, 
+                    name: "Miner " + (this.miners.length + 1), 
+                    task: 'idle', speed: 2, box: null, target: null, 
+                    hp: 50, maxHp: 50, stuck: 0,
+                    gold: Math.floor(Math.random() * 20)
+                });
+                this.updateSidebar();
+            }
+        },
+
+        setGlobalTask(t) { this.globalTask = t; },
+        buyWeapon() { if(this.p.iron >= 10) { this.p.iron -= 10; this.p.weapon += 1; } },
+
+        updateSidebar() {
+            let list = document.getElementById('miner-list');
+            list.innerHTML = '';
+            this.miners.forEach((m) => {
+                let div = document.createElement('div');
+                div.className = 'btn';
+                div.innerText = m.name;
+                div.onclick = () => { this.selectedMiner = m; document.getElementById('overlay').style.display = 'flex'; };
+                list.appendChild(div);
+            });
+        },
+
+        renameMiner() { this.selectedMiner.name = document.getElementById('rename').value || this.selectedMiner.name; this.updateSidebar(); },
+        resetMiner() { 
+            this.selectedMiner.task = 'idle'; this.selectedMiner.target = null; this.selectedMiner.box = null; this.selectedMiner.stuck = 0; 
+            document.getElementById('overlay').style.display = 'none'; 
+        },
+        
+        drawHP(x, y, hp, maxHp) {
+            ctx.fillStyle = 'red'; ctx.fillRect(x, y - 10, 30, 5);
+            ctx.fillStyle = 'lime'; ctx.fillRect(x, y - 10, 30 * (hp / maxHp), 5);
+        },
+
+        setTask(t) { if(t === 'box_start') this.interaction = 'BOX_START'; else this.selectedMiner.task = t; document.getElementById('overlay').style.display='none'; },
+        setInteraction(i) { this.interaction = i; document.getElementById('overlay').style.display = 'none'; },
+
+        collect(t) {
+            if(t === 1) this.p.dirt++;
+            if(t === 3) this.p.gold++;
+            if(t === 4) this.p.iron++;
+        },
+
+        click(e) {
+            if(!this.started) return;
+            const camX = this.p.x - canvas.width/2, camY = this.p.y - canvas.height/2;
+            const wx = e.clientX + camX;
+            const wy = e.clientY + camY;
+            const gx = Math.floor(wx/50), gy = Math.floor(wy/50);
+
+            if(this.mode === 'weapon') {
+                this.miners.forEach((m, idx) => {
+                    if(Math.abs(m.x - wx) < 50 && Math.abs(m.y - wy) < 50) {
+                        m.hp -= (10 + (this.p.weapon * 5));
+                        if(m.hp <= 0) {
+                            this.p.gold += Math.floor(m.gold / 2);
+                            this.miners.splice(idx, 1);
+                        }
+                        this.updateSidebar();
+                    }
+                });
+            }
+            else if(this.interaction === 'GOTO') { this.selectedMiner.target = {x: wx, y: wy}; this.interaction = 'normal'; }
+            else if(this.interaction === 'BOX_START') { this.boxStart = {x: gx, y: gy}; this.interaction = 'BOX_END'; }
+            else if(this.interaction === 'BOX_END') { this.selectedMiner.box = {s: this.boxStart, e: {x: gx, y: gy}}; this.boxStart = null; this.interaction = 'normal'; }
+            else if(this.mode === 'build' && this.p.dirt >= 5) { this.map[`${gx},${gy}`] = 2; this.p.dirt -= 5; }
+            else if(this.mode === 'mine') {
+                if(this.isTouchingAir(gx, gy)) {
+                    let t = this.getTile(gx, gy);
+                    this.collect(t);
+                    this.map[`${gx},${gy}`] = 0;
+                }
+            }
+        },
+
+        loop() {
+            if(!this.started) return;
+            this.frame++;
+
+            // Autosave every 5 seconds (assuming 60fps)
+            if(this.frame % 300 === 0) this.saveGame();
+
+            // Respawn loop
+            if(this.frame % 300 === 0) {
+                let rx = Math.floor(Math.random() * 20 - 10);
+                let ry = Math.floor(Math.random() * 20 - 10);
+                if(this.getTile(rx, ry) === 0) {
+                    this.map[`${rx},${ry}`] = Math.random() > 0.5 ? 3 : 4;
+                }
+            }
+
+            this.miners.forEach(m => {
+                let moved = false;
+                let activeTask = this.globalTask !== 'idle' ? this.globalTask : m.task;
+                
+                if(m.target) {
+                    let dx = m.target.x - m.x; let dy = m.target.y - m.y;
+                    if(Math.abs(dx) < 20 && Math.abs(dy) < 20) {
+                        m.target = null;
+                        if(activeTask === 'come_here') { m.task = 'idle'; m.target = null; }
+                    }
+                    else moved = this.tryMove(m, Math.sign(dx) * m.speed, Math.sign(dy) * m.speed);
+                }
+                else if(activeTask === 'mine_gold' || activeTask === 'mine_iron') {
+                    let targetType = activeTask === 'mine_gold' ? 3 : 4;
+                    let mx = Math.floor(m.x/50), my = Math.floor(m.y/50);
+                    let found = false;
+                    for(let r=1; r<=20; r++) { 
+                        for(let i=-r; i<=r; i++) {
+                            for(let j=-r; j<=r; j++) {
+                                if(this.getTile(mx+i, my+j) === targetType) {
+                                    let tx = mx+i; let ty = my+j;
+                                    let dx = (tx*50 - m.x); let dy = (ty*50 - m.y);
+                                    if (Math.abs(dx) < 60 && Math.abs(dy) < 60) { this.collect(targetType); this.map[`${tx},${ty}`] = 0; moved = true; found = true;}
+                                    else { moved = this.tryMove(m, Math.sign(dx)*m.speed, Math.sign(dy)*m.speed); found = true;}
+                                    break;
+                                }
+                            }
+                            if(found) break;
+                        }
+                        if(found) break;
+                    }
+                }
+                else if(activeTask === 'dir_forward') moved = this.tryMove(m, m.speed, 0);
+                else if(activeTask === 'dir_back') moved = this.tryMove(m, -m.speed, 0);
+                else if(activeTask === 'dir_up') moved = this.tryMove(m, 0, -m.speed);
+                else if(activeTask === 'dir_down') moved = this.tryMove(m, 0, m.speed);
+
+                if(!moved && activeTask !== 'idle') m.stuck++; else m.stuck = 0;
+            });
+
+            let dx = (this.keys['KeyD'] ? 8 : 0) - (this.keys['KeyA'] ? 8 : 0);
+            let dy = (this.keys['KeyS'] ? 8 : 0) - (this.keys['KeyW'] ? 8 : 0);
+            if(this.getTile(Math.floor((this.p.x+dx+15)/50), Math.floor((this.p.y+15)/50)) === 0) this.p.x += dx;
+            if(this.getTile(Math.floor((this.p.x+15)/50), Math.floor((this.p.y+dy+15)/50)) === 0) this.p.y += dy;
+
+            ctx.clearRect(0,0, canvas.width, canvas.height);
+            let camX = this.p.x - canvas.width/2, camY = this.p.y - canvas.height/2;
+
+            let startX = Math.floor(camX/50) - 1; let endX = Math.floor(camX/50) + Math.ceil(canvas.width/50) + 1;
+            let startY = Math.floor(camY/50) - 1; let endY = Math.floor(camY/50) + Math.ceil(canvas.height/50) + 1;
+
+            for(let x = startX; x <= endX; x++) {
+                for(let y = startY; y <= endY; y++) {
+                    let t = this.getTile(x, y);
+                    if(t !== 0) {
+                        ctx.fillStyle = (t===1?'#8B4513':(t===2?'#444':(t===3?'#FFD700':(t===4?'#A0A0A0':'#333')))); 
+                        ctx.fillRect(x*50-camX, y*50-camY, 50, 50);
+                    }
+                }
+            }
+
+            ctx.strokeStyle = "lime"; ctx.lineWidth = 3;
+            this.miners.forEach(m => {
+                if(m.target) { ctx.strokeRect(m.target.x - camX - 10, m.target.y - camY - 10, 20, 20); }
+            });
+
+            mCtx.clearRect(0,0,150,150);
+            mCtx.fillStyle = 'blue';
+            mCtx.fillRect((this.p.x/50 + this.OFFSET)/1000 * 150 - 2, (this.p.y/50 + this.OFFSET)/1000 * 150 - 2, 4, 4);
+
+            ctx.textAlign = "center"; ctx.font = "12px sans-serif";
+            this.miners.forEach(m => {
+                ctx.fillStyle = (m.stuck > 50) ? (Math.floor(this.frame/10)%2===0 ? 'yellow' : 'black') : 'red'; 
+                ctx.fillRect(m.x - camX, m.y - camY, 30, 30);
+                this.drawHP(m.x - camX, m.y - camY, m.hp, m.maxHp);
+                ctx.fillStyle = 'white'; ctx.fillText(m.name, m.x - camX + 15, m.y - camY - 15);
+            });
+
+            ctx.fillStyle = (this.mode === 'mine' ? '#4da6ff' : (this.mode === 'weapon' ? '#ff4d4d' : '#a67c52'));
+            ctx.fillRect(canvas.width/2, canvas.height/2, 30, 30);
+            this.drawHP(canvas.width/2, canvas.height/2, this.p.hp, this.p.maxHp);
+            ctx.fillStyle = 'white'; ctx.fillText(this.p.name, canvas.width/2 + 15, canvas.height/2 - 15);
+
+            document.getElementById('coords').innerText = Math.floor(this.p.x/50) + ',' + Math.floor(this.p.y/50);
+            document.getElementById('hp').innerText = this.p.hp;
+            document.getElementById('dirt').innerText = this.p.dirt;
+            document.getElementById('gold').innerText = this.p.gold;
+            document.getElementById('iron').innerText = this.p.iron;
+            document.getElementById('food').innerText = this.p.food;
+            document.getElementById('lb-text').innerText = this.p.name + ": " + this.p.gold + " | Weapon Lvl: " + this.p.weapon;
+            requestAnimationFrame(() => this.loop());
+        }
+    };
+
+    window.onkeydown = e => Game.keys[e.code] = true;
+    window.onkeyup = e => Game.keys[e.code] = false;
+    window.onmousedown = (e) => Game.click(e);
+</script>
+</body>
+</html>
