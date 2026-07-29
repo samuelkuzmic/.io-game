@@ -2,34 +2,37 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Mine Forge: Multiplayer Sync</title>
-    <!-- Firebase SDKs -->
-<script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-    import { getFirestore, doc, setDoc, getDoc, onSnapshot, collection, deleteDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+    <title>Mine Forge: Multiplayer Combat</title>
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+        import { getFirestore, doc, setDoc, getDoc, onSnapshot, collection, deleteDoc, updateDoc, getDocs, increment } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
-    const firebaseConfig = {
-      apiKey: "AIzaSyBsJywhasKsNtkcVged4jDBs39LWXn74dw",
-      authDomain: "io-game-7f1b7.firebaseapp.com",
-      projectId: "io-game-7f1b7",
-      storageBucket: "io-game-7f1b7.firebasestorage.app",
-      messagingSenderId: "953780706110",
-      appId: "1:953780706110:web:e270ca170f2b7470372a6f",
-      measurementId: "G-70KELWQFCK"
-    };
+        const firebaseConfig = {
+            apiKey: "AIzaSyBsJywhasKsNtkcVged4jDBs39LWXn74dw",
+            authDomain: "io-game-7f1b7.firebaseapp.com",
+            projectId: "io-game-7f1b7",
+            storageBucket: "io-game-7f1b7.firebasestorage.app",
+            messagingSenderId: "953780706110",
+            appId: "1:953780706110:web:e270ca170f2b7470372a6f",
+            measurementId: "G-70KELWQFCK"
+        };
 
-    const app = initializeApp(firebaseConfig);
-    window.db = getFirestore(app);
-    window.doc = doc;
-    window.setDoc = setDoc;
-    window.getDoc = getDoc;
-    window.onSnapshot = onSnapshot;
-    window.collection = collection;
-    window.deleteDoc = deleteDoc;
-</script>
+        const app = initializeApp(firebaseConfig);
+        window.db = getFirestore(app);
+        window.doc = doc;
+        window.setDoc = setDoc;
+        window.updateDoc = updateDoc;
+        window.getDoc = getDoc;
+        window.onSnapshot = onSnapshot;
+        window.collection = collection;
+        window.deleteDoc = deleteDoc;
+        window.getDocs = getDocs;
+        window.increment = increment;
+    </script>
     <style>
         body { margin: 0; background: #111; color: white; font-family: sans-serif; overflow: hidden; }
-        #title-screen { position: absolute; top:0; left:0; width: 100%; height: 100%; background: #000; z-index: 999; display: flex; flex-direction: column; justify-content: center; align-items: center; }
+        #title-screen, #death-screen { position: absolute; top:0; left:0; width: 100%; height: 100%; background: #000; z-index: 9999; display: flex; flex-direction: column; justify-content: center; align-items: center; }
+        #death-screen { display: none; background: rgba(200, 0, 0, 0.9); }
         #sidebar { position: absolute; left: 0; top: 0; width: 220px; height: 100%; background: #1a1a1a; border-right: 2px solid #444; padding: 10px; z-index: 10; }
         #ui { position: absolute; bottom: 20px; right: 20px; background: rgba(0,0,0,0.85); padding: 15px; border: 1px solid #555; z-index: 10; }
         #mode-indicator { position: absolute; top: 10px; right: 20px; padding: 10px; border: 2px solid #fff; font-weight: bold; }
@@ -49,6 +52,12 @@
     <div class="btn" onclick="Game.startGame()">START GAME</div>
 </div>
 
+<div id="death-screen">
+    <h1 style="font-size: 72px;">YOU DIED</h1>
+    <h2 id="final-gold"></h2>
+    <div class="btn" onclick="location.reload()">RESPAWN</div>
+</div>
+
 <div id="mode-indicator" style="color: #4da6ff;">MODE: MINE</div>
 
 <div id="sidebar">
@@ -66,13 +75,13 @@
 <div id="minimap-container"><canvas id="minimap" width="150" height="150"></canvas></div>
 
 <div id="ui">
-    <div>Pos: <span id="coords">0,0</span> | HP: <span id="hp">100</span></div>
+    <div>Pos: <span id="coords">0,0</span> | HP: <span id="hp">100</span> | Weapon: <span id="w-lvl">0</span></div>
     <div>Dirt: <span id="dirt">0</span> | Gold: <span id="gold">0</span> | Iron: <span id="iron">0</span> | Food: <span id="food">0</span></div>
     <div class="btn" style="border-left: 5px solid #4da6ff;" onclick="Game.setMode('mine')">Mine Mode</div>
     <div class="btn" style="border-left: 5px solid #ff4d4d;" onclick="Game.setMode('weapon')">Combat Mode</div>
     <div class="btn" style="border-left: 5px solid #a67c52;" onclick="Game.setMode('build')">Build Mode</div>
     <div class="btn" onclick="Game.buyMiner()">Buy Miner (5 Gold)</div>
-    <div class="btn" onclick="Game.buyWeapon()">Buy Weapon (10 Iron)</div>
+    <div class="btn" id="w-btn" onclick="Game.buyWeapon()">Buy Weapon (10 Iron)</div>
     <div class="btn" onclick="Game.buyFood()">Buy Food (5 Iron)</div>
     <div class="btn" onclick="Game.upgradeFood()">Upgrade Food (10 Iron)</div>
     <div class="btn" onclick="Game.eatFood()">Eat Food (Heal)</div>
@@ -98,41 +107,77 @@
 <script>
     const canvas = document.getElementById('game');
     const ctx = canvas.getContext('2d');
-    const mCanvas = document.getElementById('minimap');
-    const mCtx = mCanvas.getContext('2d');
     canvas.width = window.innerWidth; canvas.height = window.innerHeight;
 
-    window.addEventListener('beforeunload', async () => {
-        if(Game.started) {
-            await window.deleteDoc(window.doc(window.db, "players", Game.p.name));
-        }
-    });
+    window.addEventListener('pagehide', () => Game.cleanup());
 
     const Game = {
-        p: { x: 0, y: 0, gold: 0, iron: 0, dirt: 0, name: "Player", hp: 100, maxHp: 100, weapon: 0, food: 0, foodHeal: 20 },
+        p: { x: 0, y: 0, gold: 0, iron: 0, dirt: 0, name: "", hp: 100, maxHp: 100, weapon: 0, food: 0, foodHeal: 20 },
         map: {}, miners: [], selectedMiner: null, mode: 'mine', interaction: 'normal', boxStart: null,
         globalTask: 'idle', frame: 0,
         WORLD_SIZE: 1000, OFFSET: 500,
         players: {}, 
-        mouse: {x: 0, y: 0}, keys: {}, started: false,
+        mouse: {x: 0, y: 0}, keys: {}, started: false, dead: false,
+
+        cleanup() {
+            if(this.p.name) {
+                const name = this.p.name;
+                this.p.name = ""; 
+                try {
+                    window.deleteDoc(window.doc(window.db, "players", name));
+                } catch(e) {}
+            }
+        },
 
         async startGame() {
-            const name = document.getElementById('nameInput').value;
+            const name = document.getElementById('nameInput').value.trim();
             if(!name) return;
+
+            const existingPlayer = await window.getDoc(window.doc(window.db, "players", name));
+            if (existingPlayer.exists()) {
+                alert("That name is already a player!");
+                return;
+            }
+
             this.p.name = name;
-            
-            // Listen for all players
+
+            // Monitor players to reset map if empty
+            window.onSnapshot(window.collection(window.db, "players"), async (snapshot) => {
+                if (snapshot.size === 0) {
+                    const mapDocs = await window.getDocs(window.collection(window.db, "map"));
+                    mapDocs.forEach((d) => { window.deleteDoc(d.ref); });
+                }
+            });
+
             window.onSnapshot(window.collection(window.db, "players"), (snapshot) => {
-                this.players = {};
-                snapshot.forEach(doc => { if(doc.id !== this.p.name) this.players[doc.id] = doc.data(); });
+                snapshot.docChanges().forEach((change) => {
+                    const docId = change.doc.id;
+                    const playerData = change.doc.data();
+                    
+                    if(docId === this.p.name) {
+                        if (change.type === "removed") {
+                            this.dead = true; 
+                            this.started = false; 
+                            document.getElementById('death-screen').style.display = 'flex';
+                            return; 
+                        }
+                        if(this.dead) return;
+                        this.p.hp = playerData.hp;
+                        this.p.gold = playerData.gold;
+                    } else {
+                        if (change.type === "added" || change.type === "modified") { this.players[docId] = playerData; } 
+                        if (change.type === "removed") { delete this.players[docId]; }
+                    }
+                });
             });
 
-            // Listen for world sync
-            window.onSnapshot(window.doc(window.db, "global", "world"), (doc) => {
-                if(doc.exists()) this.map = doc.data().tiles;
+            window.onSnapshot(window.collection(window.db, "map"), (snapshot) => {
+                snapshot.docChanges().forEach((change) => {
+                    const [x, y] = change.doc.id.split(',').map(Number);
+                    if (change.type === "removed") delete this.map[`${x},${y}`];
+                    else this.map[`${x},${y}`] = change.doc.data().type;
+                });
             });
-
-            await this.loadGame(name);
 
             document.getElementById('title-screen').style.display = 'none';
             this.started = true;
@@ -140,23 +185,33 @@
             this.loop();
         },
 
-        async saveGame() {
-            if(!window.db) return;
-            try {
-                await window.setDoc(window.doc(window.db, "players", this.p.name), this.p);
-                // Sync map if changed
-                await window.setDoc(window.doc(window.db, "global", "world"), { tiles: this.map });
-            } catch (e) { console.error("Save failed", e); }
+        async die() {
+            if(this.dead) return;
+            this.dead = true;
+            this.started = false;
+            document.getElementById('final-gold').innerText = "Gold Earned: " + this.p.gold;
+            document.getElementById('death-screen').style.display = 'flex';
+            await this.cleanup();
         },
 
-        async loadGame(name) {
-            if(!window.db) return;
+        async saveGame() {
+            if(!window.db || this.dead) return;
             try {
-                const docSnap = await window.getDoc(window.doc(window.db, "players", name));
-                if (docSnap.exists()) {
-                    this.p = { ...this.p, ...docSnap.data() };
-                }
-            } catch (e) { console.error("Load failed", e); }
+                await window.setDoc(window.doc(window.db, "players", this.p.name), {
+                    ...this.p,
+                    miners: this.miners
+                });
+            } catch (e) {}
+        },
+
+        async syncPosition() {
+            if(!window.db || this.dead) return;
+            try {
+                await window.updateDoc(window.doc(window.db, "players", this.p.name), {
+                    x: this.p.x,
+                    y: this.p.y
+                });
+            } catch (e) {}
         },
 
         setMode(m) { 
@@ -169,6 +224,15 @@
         buyFood() { if(this.p.iron >= 5) { this.p.iron -= 5; this.p.food += 1; } },
         upgradeFood() { if(this.p.iron >= 10) { this.p.iron -= 10; this.p.foodHeal += 10; } },
         eatFood() { if(this.p.food > 0) { this.p.food -= 1; this.p.hp = Math.min(this.p.maxHp, this.p.hp + this.p.foodHeal); } },
+        
+        buyWeapon() { 
+            let price = (this.p.weapon + 1) * 10;
+            if(this.p.iron >= price) { 
+                this.p.iron -= price; 
+                this.p.weapon += 1; 
+            } 
+        },
+
         allStop() { this.globalTask = 'idle'; this.miners.forEach(m => { m.task = 'idle'; m.target = null; }); },
         allComeHere() { 
             this.globalTask = 'come_here'; 
@@ -203,8 +267,7 @@
             let tile = this.getTile(tx, ty);
             
             if(tile !== 0 && tile !== 2 && tile !== 5) {
-                this.collect(tile);
-                this.map[`${tx},${ty}`] = 0;
+                this.collect(tile, tx, ty);
                 return false; 
             } else if (tile === 0) {
                 m.x = nextX; m.y = nextY;
@@ -224,11 +287,11 @@
                     gold: Math.floor(Math.random() * 20)
                 });
                 this.updateSidebar();
+                this.saveGame();
             }
         },
 
         setGlobalTask(t) { this.globalTask = t; },
-        buyWeapon() { if(this.p.iron >= 10) { this.p.iron -= 10; this.p.weapon += 1; } },
 
         updateSidebar() {
             let list = document.getElementById('miner-list');
@@ -250,66 +313,85 @@
         
         drawHP(x, y, hp, maxHp) {
             ctx.fillStyle = 'red'; ctx.fillRect(x, y - 10, 30, 5);
-            ctx.fillStyle = 'lime'; ctx.fillRect(x, y - 10, 30 * (hp / maxHp), 5);
+            ctx.fillStyle = 'lime'; ctx.fillRect(x, y - 10, 30 * Math.max(0, (hp / maxHp)), 5);
         },
 
         setTask(t) { if(t === 'box_start') this.interaction = 'BOX_START'; else this.selectedMiner.task = t; document.getElementById('overlay').style.display='none'; },
         setInteraction(i) { this.interaction = i; document.getElementById('overlay').style.display = 'none'; },
 
-        collect(t) {
-            if(t === 1) this.p.dirt++;
-            if(t === 3) this.p.gold++;
-            if(t === 4) this.p.iron++;
+        async collect(t, tx, ty) {
+            let field = t === 1 ? 'dirt' : (t === 3 ? 'gold' : (t === 4 ? 'iron' : (t === 2 ? 'dirt' : null)));
+            if(!field) return;
+
+            if (t === 2) this.p.dirt += 4; // Refund for Wall
+            this.p[field]++;
+            this.map[`${tx},${ty}`] = 0;
+
+            try {
+                await window.updateDoc(window.doc(window.db, "players", this.p.name), { [field]: window.increment(1) });
+                await window.setDoc(window.doc(window.db, "map", `${tx},${ty}`), { type: 0 });
+            } catch(e) {}
         },
 
-        click(e) {
-            if(!this.started) return;
+        async click(e) {
+            if(!this.started || this.dead) return;
             const camX = this.p.x - canvas.width/2, camY = this.p.y - canvas.height/2;
             const wx = e.clientX + camX;
             const wy = e.clientY + camY;
             const gx = Math.floor(wx/50), gy = Math.floor(wy/50);
 
             if(this.mode === 'weapon') {
-                this.miners.forEach((m, idx) => {
-                    if(Math.abs(m.x - wx) < 50 && Math.abs(m.y - wy) < 50) {
-                        m.hp -= (10 + (this.p.weapon * 5));
-                        if(m.hp <= 0) {
-                            this.p.gold += Math.floor(m.gold / 2);
-                            this.miners.splice(idx, 1);
+                for(let name in this.players) {
+                    let p = this.players[name];
+                    if(Math.abs(p.x - wx) < 60 && Math.abs(p.y - wy) < 60) {
+                        let dmg = 10 + (this.p.weapon * 5);
+                        let targetHp = (p.hp || 100) - dmg;
+                        
+                        if(targetHp <= 0) {
+                            let stolenGold = Math.floor((p.gold || 0) / 2);
+                            this.p.gold += stolenGold;
+                            await window.deleteDoc(window.doc(window.db, "players", name));
+                        } else {
+                            await window.updateDoc(window.doc(window.db, "players", name), { hp: targetHp });
                         }
-                        this.updateSidebar();
+                        return;
                     }
-                });
+                }
             }
             else if(this.interaction === 'GOTO') { this.selectedMiner.target = {x: wx, y: wy}; this.interaction = 'normal'; }
             else if(this.interaction === 'BOX_START') { this.boxStart = {x: gx, y: gy}; this.interaction = 'BOX_END'; }
             else if(this.interaction === 'BOX_END') { this.selectedMiner.box = {s: this.boxStart, e: {x: gx, y: gy}}; this.boxStart = null; this.interaction = 'normal'; }
-            else if(this.mode === 'build' && this.p.dirt >= 5) { this.map[`${gx},${gy}`] = 2; this.p.dirt -= 5; }
+            else if(this.mode === 'build' && this.p.dirt >= 5) { 
+                this.map[`${gx},${gy}`] = 2; 
+                await window.setDoc(window.doc(window.db, "map", `${gx},${gy}`), { type: 2 });
+                this.p.dirt -= 5; 
+            }
             else if(this.mode === 'mine') {
-                if(this.isTouchingAir(gx, gy)) {
-                    let t = this.getTile(gx, gy);
-                    this.collect(t);
-                    this.map[`${gx},${gy}`] = 0;
+                let t = this.getTile(gx, gy);
+                if(t === 2 || this.isTouchingAir(gx, gy)) {
+                    this.collect(t, gx, gy);
                 }
             }
         },
 
         loop() {
             if(!this.started) return;
+            if(this.p.hp <= 0 && !this.dead) { this.die(); return; }
+            if(this.dead) return; 
+            
             this.frame++;
+            if(this.frame % 30 === 0) this.saveGame();
+            if(this.frame % 10 === 0) this.syncPosition(); 
 
-            if(this.frame % 300 === 0) this.saveGame();
+            document.getElementById('w-lvl').innerText = this.p.weapon;
+            document.getElementById('w-btn').innerText = "Buy Weapon (Lvl " + (this.p.weapon + 1) + " Cost: " + ((this.p.weapon + 1) * 10) + " Iron)";
 
             this.miners.forEach(m => {
                 let moved = false;
                 let activeTask = this.globalTask !== 'idle' ? this.globalTask : m.task;
-                
                 if(m.target) {
                     let dx = m.target.x - m.x; let dy = m.target.y - m.y;
-                    if(Math.abs(dx) < 20 && Math.abs(dy) < 20) {
-                        m.target = null;
-                        if(activeTask === 'come_here') { m.task = 'idle'; m.target = null; }
-                    }
+                    if(Math.abs(dx) < 20 && Math.abs(dy) < 20) { m.target = null; if(activeTask === 'come_here') { m.task = 'idle'; m.target = null; } }
                     else moved = this.tryMove(m, Math.sign(dx) * m.speed, Math.sign(dy) * m.speed);
                 }
                 else if(activeTask === 'mine_gold' || activeTask === 'mine_iron') {
@@ -322,7 +404,7 @@
                                 if(this.getTile(mx+i, my+j) === targetType) {
                                     let tx = mx+i; let ty = my+j;
                                     let dx = (tx*50 - m.x); let dy = (ty*50 - m.y);
-                                    if (Math.abs(dx) < 60 && Math.abs(dy) < 60) { this.collect(targetType); this.map[`${tx},${ty}`] = 0; moved = true; found = true;}
+                                    if (Math.abs(dx) < 60 && Math.abs(dy) < 60) { this.collect(targetType, tx, ty); moved = true; found = true;}
                                     else { moved = this.tryMove(m, Math.sign(dx)*m.speed, Math.sign(dy)*m.speed); found = true;}
                                     break;
                                 }
@@ -336,14 +418,12 @@
                 else if(activeTask === 'dir_back') moved = this.tryMove(m, -m.speed, 0);
                 else if(activeTask === 'dir_up') moved = this.tryMove(m, 0, -m.speed);
                 else if(activeTask === 'dir_down') moved = this.tryMove(m, 0, m.speed);
-
-                if(!moved && activeTask !== 'idle') m.stuck++; else m.stuck = 0;
             });
 
             let dx = (this.keys['KeyD'] ? 4 : 0) - (this.keys['KeyA'] ? 4 : 0);
             let dy = (this.keys['KeyS'] ? 4 : 0) - (this.keys['KeyW'] ? 4 : 0);
-            if(this.getTile(Math.floor((this.p.x+dx+15)/50), Math.floor((this.p.y+15)/50)) === 0) this.p.x += dx;
-            if(this.getTile(Math.floor((this.p.x+15)/50), Math.floor((this.p.y+dy+15)/50)) === 0) this.p.y += dy;
+            if(!this.dead && this.getTile(Math.floor((this.p.x+dx+15)/50), Math.floor((this.p.y+15)/50)) === 0) this.p.x += dx;
+            if(!this.dead && this.getTile(Math.floor((this.p.x+15)/50), Math.floor((this.p.y+dy+15)/50)) === 0) this.p.y += dy;
 
             ctx.clearRect(0,0, canvas.width, canvas.height);
             let camX = this.p.x - canvas.width/2, camY = this.p.y - canvas.height/2;
@@ -361,29 +441,26 @@
                 }
             }
 
-            // Draw Other Players
-            ctx.fillStyle = "white";
             for(let name in this.players) {
                 let p = this.players[name];
+                ctx.fillStyle = "white";
                 ctx.fillRect(p.x - camX, p.y - camY, 30, 30);
-                ctx.fillText(name, p.x - camX + 15, p.y - camY - 10);
+                this.drawHP(p.x - camX, p.y - camY, p.hp || 100, 100);
+                ctx.fillStyle = 'white';
+                ctx.fillText(name, p.x - camX + 15, p.y - camY - 15);
+                if(p.miners) {
+                    p.miners.forEach(m => {
+                        ctx.fillStyle = 'red';
+                        ctx.fillRect(m.x - camX, m.y - camY, 20, 20);
+                        this.drawHP(m.x - camX, m.y - camY, m.hp, m.maxHp);
+                    });
+                }
             }
 
-            ctx.strokeStyle = "lime"; ctx.lineWidth = 3;
             this.miners.forEach(m => {
-                if(m.target) { ctx.strokeRect(m.target.x - camX - 10, m.target.y - camY - 10, 20, 20); }
-            });
-
-            mCtx.clearRect(0,0,150,150);
-            mCtx.fillStyle = 'blue';
-            mCtx.fillRect((this.p.x/50 + this.OFFSET)/1000 * 150 - 2, (this.p.y/50 + this.OFFSET)/1000 * 150 - 2, 4, 4);
-
-            ctx.textAlign = "center"; ctx.font = "12px sans-serif";
-            this.miners.forEach(m => {
-                ctx.fillStyle = (m.stuck > 50) ? (Math.floor(this.frame/10)%2===0 ? 'yellow' : 'black') : 'red'; 
-                ctx.fillRect(m.x - camX, m.y - camY, 30, 30);
+                ctx.fillStyle = 'red';
+                ctx.fillRect(m.x - camX, m.y - camY, 20, 20);
                 this.drawHP(m.x - camX, m.y - camY, m.hp, m.maxHp);
-                ctx.fillStyle = 'white'; ctx.fillText(m.name, m.x - camX + 15, m.y - camY - 15);
             });
 
             ctx.fillStyle = (this.mode === 'mine' ? '#4da6ff' : (this.mode === 'weapon' ? '#ff4d4d' : '#a67c52'));
@@ -392,23 +469,20 @@
             ctx.fillStyle = 'white'; ctx.fillText(this.p.name, canvas.width/2 + 15, canvas.height/2 - 15);
 
             document.getElementById('coords').innerText = Math.floor(this.p.x/50) + ',' + Math.floor(this.p.y/50);
-            document.getElementById('hp').innerText = this.p.hp;
+            document.getElementById('hp').innerText = Math.max(0, this.p.hp);
             document.getElementById('dirt').innerText = this.p.dirt;
             document.getElementById('gold').innerText = this.p.gold;
             document.getElementById('iron').innerText = this.p.iron;
             document.getElementById('food').innerText = this.p.food;
-            
-            // Leaderboard logic: Top 10
+
             let sortedPlayers = Object.entries(this.players).map(([k, v]) => ({name: k, gold: v.gold || 0}));
             sortedPlayers.push({name: this.p.name, gold: this.p.gold});
             sortedPlayers.sort((a,b) => b.gold - a.gold);
-            let lbText = sortedPlayers.slice(0, 10).map((p, i) => `${i+1}. ${p.name}: ${p.gold}`).join('<br>');
-            document.getElementById('lb-text').innerHTML = lbText;
+            document.getElementById('lb-text').innerHTML = sortedPlayers.slice(0, 10).map((p, i) => `${i+1}. ${p.name}: ${p.gold}`).join('<br>');
 
             requestAnimationFrame(() => this.loop());
         }
     };
-
     window.onkeydown = e => Game.keys[e.code] = true;
     window.onkeyup = e => Game.keys[e.code] = false;
     window.onmousedown = (e) => Game.click(e);
